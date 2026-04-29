@@ -89,6 +89,7 @@ interface ChatHistoryPayload {
 }
 
 const INTERNAL_ASSISTANT_MARKERS = new Set(['NO_REPLY']);
+const RELATIVE_GATEWAY_MEDIA_PATH_RE = /^\/(?:api\/chat\/media\/outgoing\/|media\/|__openclaw__\/media\/)/;
 
 /** Parsed tool call for transport to renderer */
 interface ParsedToolCall {
@@ -101,7 +102,30 @@ interface ParsedToolCall {
   completedAt?: string;
 }
 
+function resolveRelativeImageUrls(messages: Record<string, unknown>[], httpBase: string): void {
+  for (const msg of messages) {
+    const blocks = msg.content;
+    if (!Array.isArray(blocks)) continue;
+    for (const block of blocks) {
+      if (typeof block !== 'object' || block === null) continue;
+      const imageBlock = block as Record<string, unknown>;
+      if (imageBlock.type !== 'image') continue;
+      if (typeof imageBlock.url === 'string' && RELATIVE_GATEWAY_MEDIA_PATH_RE.test(imageBlock.url)) {
+        imageBlock.url = new URL(imageBlock.url, httpBase).toString();
+      }
+      if (typeof imageBlock.openUrl === 'string' && RELATIVE_GATEWAY_MEDIA_PATH_RE.test(imageBlock.openUrl)) {
+        imageBlock.openUrl = new URL(imageBlock.openUrl, httpBase).toString();
+      }
+    }
+  }
+}
+
 export function registerWsHandlers(): void {
+  ipcMain.handle('ws:get-http-base', async (_event, payload: { gatewayId: string }) => {
+    const gw = getGatewayClient(payload.gatewayId);
+    return gw?.httpBase;
+  });
+
   ipcMain.handle(
     'ws:send-message',
     async (
@@ -176,7 +200,12 @@ export function registerWsHandlers(): void {
         return { ok: false, error: 'gateway not connected' };
       }
       try {
-        const result = await gw.getChatHistory(payload.sessionKey, payload.limit);
+        const result = (await gw.getChatHistory(payload.sessionKey, payload.limit)) as Record<string, unknown> & {
+          messages?: Record<string, unknown>[];
+        };
+        if (result?.messages?.length) {
+          resolveRelativeImageUrls(result.messages, gw.httpBase);
+        }
         return { ok: true, result };
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'unknown error';
@@ -311,7 +340,7 @@ export function registerWsHandlers(): void {
             .map((m) => {
               const normalizedContent =
                 m.role === 'assistant'
-                  ? normalizeContentBlocks(m.content ?? [])
+                  ? normalizeContentBlocks(m.content ?? [], gw.httpBase)
                   : {
                       content: (m.content ?? [])
                         .filter((b) => b.type === 'text' && b.text)
