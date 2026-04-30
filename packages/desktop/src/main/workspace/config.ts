@@ -1,6 +1,6 @@
 import { app, safeStorage } from 'electron';
-import { join } from 'path';
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { dirname, join } from 'path';
+import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { randomUUID } from 'node:crypto';
 import { CONFIG_FILE_NAME, DEFAULT_WORKSPACE_DIR } from '@clawwork/shared';
@@ -156,20 +156,75 @@ function migrateConfigIfNeeded(config: AppConfig): AppConfig {
 export function readConfig(): AppConfig | null {
   const cfgPath = configFilePath();
   if (!existsSync(cfgPath)) return null;
+  let raw: string;
   try {
-    const raw = readFileSync(cfgPath, 'utf-8');
-    const config = JSON.parse(raw) as AppConfig;
+    raw = readFileSync(cfgPath, 'utf-8');
+  } catch (err) {
+    console.error('[config] failed to read:', err);
+    return null;
+  }
+  let config: AppConfig;
+  try {
+    config = JSON.parse(raw) as AppConfig;
+  } catch (err) {
+    console.error('[config] failed to read:', err);
+    const corruptedPath = `${cfgPath}.corrupted-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    try {
+      renameSync(cfgPath, corruptedPath);
+    } catch (backupErr) {
+      console.error('[config] failed to back up corrupted config:', backupErr);
+    }
+    return null;
+  }
+  try {
     const migrated = migrateConfigIfNeeded(config);
     return decryptGatewayCredentials(migrated);
-  } catch {
+  } catch (err) {
+    console.error('[config] failed to process:', err);
     return null;
   }
 }
 
 export function writeConfig(config: AppConfig): void {
   const cfgPath = configFilePath();
+  const tmpPath = cfgPath + '.tmp';
   const encrypted = encryptGatewayCredentials(config);
-  writeFileSync(cfgPath, JSON.stringify(encrypted, null, 2), { encoding: 'utf-8', mode: 0o600 });
+  let fd: number | null = null;
+  try {
+    fd = openSync(tmpPath, 'w', 0o600);
+    writeFileSync(fd, JSON.stringify(encrypted, null, 2), { encoding: 'utf-8' });
+    fsyncSync(fd);
+    try {
+      closeSync(fd);
+    } finally {
+      fd = null;
+    }
+    renameSync(tmpPath, cfgPath);
+    try {
+      const dirFd = openSync(dirname(cfgPath), 'r');
+      try {
+        fsyncSync(dirFd);
+      } finally {
+        closeSync(dirFd);
+      }
+    } catch (syncErr) {
+      console.error('[config] failed to sync config directory:', syncErr);
+    }
+  } catch (err) {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch (closeErr) {
+        console.error('[config] failed to close temp config:', closeErr);
+      }
+    }
+    try {
+      if (existsSync(tmpPath)) unlinkSync(tmpPath);
+    } catch (cleanupErr) {
+      console.error('[config] failed to remove temp config:', cleanupErr);
+    }
+    throw err;
+  }
 }
 
 export function updateConfig(partial: Partial<AppConfig>): AppConfig {
