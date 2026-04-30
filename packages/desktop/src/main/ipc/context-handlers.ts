@@ -45,8 +45,9 @@ export function registerContextHandlers(): void {
   });
 
   ipcMain.handle('context:watch-folder', (_event, folderPath: string) => {
-    watchFolder(folderPath);
-    return { ok: true };
+    const ok = watchFolder(folderPath);
+    if (!ok) return { ok: false, error: 'watch rejected: folder limit reached or watcher failed' };
+    return { ok: true, result: folderPath };
   });
 
   ipcMain.handle('context:unwatch-folder', (_event, folderPath: string) => {
