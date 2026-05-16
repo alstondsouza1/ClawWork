@@ -292,7 +292,7 @@ export class GatewayClient {
 
     const params: GatewayConnectParams = {
       minProtocol: 3,
-      maxProtocol: 3,
+      maxProtocol: 4,
       client: {
         id: 'gateway-client',
         displayName: 'ClawWork Desktop',
