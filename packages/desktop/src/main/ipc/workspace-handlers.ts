@@ -1,4 +1,5 @@
 import { ipcMain, dialog, BrowserWindow, shell } from 'electron';
+import { join } from 'path';
 import {
   getWorkspacePath,
   writeConfig,
@@ -9,6 +10,8 @@ import {
 } from '../workspace/config.js';
 import { initWorkspace, migrateWorkspace } from '../workspace/init.js';
 import { reinitDatabase, closeDatabase } from '../db/index.js';
+
+const TEAM_WORKSPACE_SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 export function registerWorkspaceHandlers(): void {
   ipcMain.handle('workspace:open-folder', () => {
@@ -65,5 +68,14 @@ export function registerWorkspaceHandlers(): void {
 
   ipcMain.handle('workspace:get-device-id', () => {
     return ensureDeviceId();
+  });
+
+  ipcMain.handle('workspace:team-path', (_event, slug: string) => {
+    if (typeof slug !== 'string' || !TEAM_WORKSPACE_SLUG_RE.test(slug)) {
+      throw new Error('Invalid team slug');
+    }
+    const base = getWorkspacePath();
+    if (!base) return slug;
+    return join(base, slug);
   });
 }

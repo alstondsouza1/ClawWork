@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const handleMap = new Map<string, (...args: unknown[]) => unknown>();
 
 const isWorkspaceConfiguredMock = vi.fn(() => false);
-const getWorkspacePathMock = vi.fn(() => '/tmp/old-workspace');
+const getWorkspacePathMock = vi.fn<() => string | null>(() => '/tmp/old-workspace');
 const writeConfigMock = vi.fn();
 const updateConfigMock = vi.fn();
 const getDefaultWorkspacePathMock = vi.fn(() => '/tmp/default-workspace');
@@ -117,5 +117,44 @@ describe('registerWorkspaceHandlers', () => {
 
     expect(closeDatabaseMock).toHaveBeenCalledTimes(1);
     expect(reinitDatabaseMock).toHaveBeenCalledWith('/tmp/old-workspace');
+  });
+
+  it('joins workspace and slug using path.join so the host separator is used', async () => {
+    const { registerWorkspaceHandlers } = await import('../src/main/ipc/workspace-handlers.js');
+    registerWorkspaceHandlers();
+
+    const handler = handleMap.get('workspace:team-path');
+    expect(handler).toBeTypeOf('function');
+
+    getWorkspacePathMock.mockReturnValue('/tmp/claw-workspace');
+    const result = (await handler?.({}, 'test-team')) as string;
+    const expected = (await import('path')).join('/tmp/claw-workspace', 'test-team');
+
+    expect(result).toBe(expected);
+    expect(result.endsWith(`${(await import('path')).sep}test-team`)).toBe(true);
+    expect(result.includes('//test-team')).toBe(false);
+  });
+
+  it('returns slug alone when no workspace is configured', async () => {
+    getWorkspacePathMock.mockReturnValue(null);
+    const { registerWorkspaceHandlers } = await import('../src/main/ipc/workspace-handlers.js');
+    registerWorkspaceHandlers();
+
+    const handler = handleMap.get('workspace:team-path');
+    expect(handler).toBeTypeOf('function');
+
+    expect(handler?.({}, 'lonely-team')).toBe('lonely-team');
+  });
+
+  it('rejects invalid team workspace slugs', async () => {
+    const { registerWorkspaceHandlers } = await import('../src/main/ipc/workspace-handlers.js');
+    registerWorkspaceHandlers();
+
+    const handler = handleMap.get('workspace:team-path');
+    expect(handler).toBeTypeOf('function');
+
+    for (const slug of ['', '../invalid', 'invalid/path', String.raw`invalid\path`, 'bad..slug', 123]) {
+      expect(() => handler?.({}, slug)).toThrow('Invalid team slug');
+    }
   });
 });
