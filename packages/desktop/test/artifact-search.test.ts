@@ -76,3 +76,55 @@ describe('artifact search', () => {
     expect(result.snippet).not.toContain('deadbeef');
   });
 });
+
+describe('search query length guard', () => {
+  it('does not run a global search for a single-character query', () => {
+    const { db, prepare, all } = mockDb([]);
+
+    const result = globalSearch(db as never, 'a');
+
+    expect(result).toEqual([]);
+    expect(prepare).not.toHaveBeenCalled();
+    expect(all).not.toHaveBeenCalled();
+  });
+
+  it('does not run an artifact search for a single-character query', () => {
+    const { db, prepare } = mockDb([]);
+
+    const result = searchArtifacts(db as never, 'a');
+
+    expect(result).toEqual([]);
+    expect(prepare).not.toHaveBeenCalled();
+  });
+
+  it('treats punctuation-only queries as empty', () => {
+    const { db, prepare } = mockDb([]);
+
+    expect(globalSearch(db as never, '   !!  ')).toEqual([]);
+    expect(prepare).not.toHaveBeenCalled();
+  });
+
+  it('runs the prefix query once the minimum length is reached', () => {
+    const { db, all } = mockDb([]);
+
+    globalSearch(db as never, 'ab');
+
+    expect(all).toHaveBeenCalledWith('ab*', 'ab*', 'ab*');
+  });
+
+  it('preserves accented Latin characters instead of stripping them', () => {
+    const { db, all } = mockDb([]);
+
+    globalSearch(db as never, 'café');
+
+    expect(all).toHaveBeenCalledWith('café*', 'café*', 'café*');
+  });
+
+  it('preserves non-Latin scripts such as Japanese kana', () => {
+    const { db, all } = mockDb([]);
+
+    globalSearch(db as never, 'ひらがな');
+
+    expect(all).toHaveBeenCalledWith('ひらがな*', 'ひらがな*', 'ひらがな*');
+  });
+});
